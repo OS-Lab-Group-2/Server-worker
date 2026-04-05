@@ -53,9 +53,16 @@ static void print_local_ip(void);
 static int  make_listener(int port);
 static void dispatch_task(const char *src_path, worker_info_t *workers, int wcount);
 
+
+
+
 /* ═══════════════════════════════════════════════════════════════════════
  * main()
  * ═════════════════════════════════════════════════════════════════════ */
+
+
+
+ // added main function
 int main(void)
 {
     worker_info_t workers[MAX_WORKERS];
