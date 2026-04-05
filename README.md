@@ -148,3 +148,4 @@ Workers will automatically ping the server every 5 seconds to maintain their reg
 - `make all`: Build both binaries.
 - `make clean`: Remove binaries and build artifacts.
 - `make install`: Install as `dte_coordinator` and `dte_worker` to `/usr/local/bin` (requires sudo).
+
