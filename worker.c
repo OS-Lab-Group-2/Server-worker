@@ -225,7 +225,137 @@ static void run_registration_loop(const char *server_ip)
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * make_listener()
+ *
+ * Creates a TCP listening socket on @port with SO_REUSEADDR set.
+ * Returns fd on success, -1 on error.
+ * ═════════════════════════════════════════════════════════════════════ */
+static int make_listener(int port)
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { LOG_ERR("socket(%d)", port); return -1; }
 
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port        = htons((uint16_t)port);
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        LOG_ERR("bind(%d)", port);
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, BACKLOG) < 0) {
+        LOG_ERR("listen(%d)", port);
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * run_load_server()  —  accept loop for LOAD_QUERY_PORT
+ * ═════════════════════════════════════════════════════════════════════ */
+static void run_load_server(int lfd)
+{
+    for (;;) {
+        struct sockaddr_in caddr;
+        socklen_t          caddrlen = sizeof(caddr);
+        int cfd = accept(lfd, (struct sockaddr *)&caddr, &caddrlen);
+        if (cfd < 0) {
+            if (errno == EINTR) continue;
+            LOG_ERR("accept load_server");
+            continue;
+        }
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            LOG_ERR("fork load_server");
+            close(cfd);
+            continue;
+        }
+        if (pid == 0) {
+            /* Child */
+            close(lfd);
+            handle_load_client(cfd, &caddr);
+            close(cfd);
+            exit(EXIT_SUCCESS);
+        }
+        /* Parent */
+        close(cfd);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * run_exec_server()  —  accept loop for WORKER_PORT
+ * ═════════════════════════════════════════════════════════════════════ */
+static void run_exec_server(int lfd)
+{
+    for (;;) {
+        struct sockaddr_in caddr;
+        socklen_t          caddrlen = sizeof(caddr);
+        int cfd = accept(lfd, (struct sockaddr *)&caddr, &caddrlen);
+        if (cfd < 0) {
+            if (errno == EINTR) continue;
+            LOG_ERR("accept exec_server");
+            continue;
+        }
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            LOG_ERR("fork exec_server");
+            close(cfd);
+            continue;
+        }
+        if (pid == 0) {
+            close(lfd);
+            handle_exec_client(cfd, &caddr);
+            close(cfd);
+            exit(EXIT_SUCCESS);
+        }
+        close(cfd);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * handle_load_client()
+ *
+ * Reads /proc/loadavg and sends a MSG_LOAD_RESPONSE.
+ * ═════════════════════════════════════════════════════════════════════ */
+static void handle_load_client(int cfd, struct sockaddr_in *addr)
+{
+    char client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr->sin_addr, client_ip, sizeof(client_ip));
+    LOG("Load query from %s", client_ip);
+
+    set_socket_timeout(cfd, 10);
+
+    pkt_header_t h;
+    if (recv_header(cfd, &h) != 0 || h.type != MSG_QUERY_LOAD) {
+        LOG("Bad load query from %s", client_ip);
+        return;
+    }
+
+    load_payload_t lp;
+    if (read_loadavg(&lp) != 0) {
+        send_error(cfd, ERR_INTERNAL, "failed to read /proc/loadavg");
+        return;
+    }
+
+    /* Convert multi-byte fields to network byte order */
+    load_payload_t lp_net = lp;
+    lp_net.running_procs = htons(lp.running_procs);
+    lp_net.total_procs   = htons(lp.total_procs);
+
+    if (send_header(cfd, MSG_LOAD_RESPONSE, FLAG_NONE,
+                    (uint32_t)sizeof(load_payload_t)) != 0) return;
+    write_all(cfd, &lp_net, sizeof(lp_net));
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
  * handle_exec_client()
