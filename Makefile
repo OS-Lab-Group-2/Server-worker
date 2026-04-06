@@ -46,3 +46,5 @@ help:
 	@echo "  worker     build the worker only"
 	@echo "  clean      remove compiled binaries"
 	@echo "  install    copy binaries to /usr/local/bin (needs sudo)"
+
+
